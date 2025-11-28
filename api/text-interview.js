@@ -1,9 +1,5 @@
 // api/text-interview.js
 
-export const config = {
-  runtime: "nodejs"
-};
-
 import { GoogleGenerativeAI } from "@google/generative-ai";
 // Ensure these paths match your filenames exactly
 import { loadHistory, appendToHistory } from "./_memory.js"; 
