@@ -213,59 +213,63 @@ function App() {
   // Speech Recognition (User Question) control
   // ------------------------------
   const startRecording = () => {
-    if (!SpeechRecognition) {
-      setStatusText('Error: Speech Recognition not supported in this browser.');
-      return;
-    }
+  if (!SpeechRecognition) {
+    setStatusText('Error: Speech Recognition not supported in this browser.');
+    return;
+  }
 
-    if (speechSynthesis.speaking || commandRecognitionRef.current) {
-      stopAllOperations();
-    }
+  // Reset command listener on fresh start
+  if (commandRecognitionRef.current) {
+    try { commandRecognitionRef.current.stop(); } catch {}
+    commandRecognitionRef.current = null;
+  }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-    recognitionRef.current = recognition;
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;        // FIXED
+  recognition.interimResults = true;    // FIXED
+  recognition.lang = 'en-US';
+  recognitionRef.current = recognition;
 
-    let fullTranscript = "";
+  let fullTranscript = "";
 
-    recognition.onstart = () => {
-      setStatusText('🔴 Listening... Speak your full question clearly.');
-      setLoading(true);
-      setListening(true);
-    };
-
-    recognition.onresult = (event) => {
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        fullTranscript += event.results[i][0].transcript;
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech Recognition Error:', event.error);
-      setStatusText(`Speech Error: ${event.error}. Conversation loop ended.`);
-      setLoading(false);
-      setListening(false);
-      recognitionRef.current = null;
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-      
-      if (fullTranscript.trim().length > 0) {
-        setStatusText('Processing your follow-up question...');
-        handleInterview(fullTranscript.trim());
-      } else {
-        // Loop terminates on silence/timeout
-        setStatusText('No voice detected. Conversation loop ended. Press START to resume.');
-        setLoading(false);
-      }
-    };
-
-    recognition.start();
+  recognition.onstart = () => {
+    setStatusText('🔴 Listening... Speak your full question clearly.');
+    setLoading(true);
+    setListening(true);
   };
+
+  recognition.onresult = (event) => {
+    let transcriptChunk = "";
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      transcriptChunk += event.results[i][0].transcript;
+    }
+    fullTranscript = transcriptChunk;
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech Recognition Error:', event.error);
+    setStatusText(`Speech Error: ${event.error}. Conversation loop ended.`);
+    setLoading(false);
+    setListening(false);
+    recognitionRef.current = null;
+  };
+
+  recognition.onend = () => {
+    setListening(false);
+    recognitionRef.current = null;
+
+    if (fullTranscript.trim().length > 0) {
+      setStatusText('Processing your question...');
+      handleInterview(fullTranscript.trim());
+    } else {
+      setStatusText('No voice detected. Press START to try again.');
+      setLoading(false);
+    }
+  };
+
+  recognition.start();
+};
+
 
   const stopRecording = () => {
     stopAllOperations();
