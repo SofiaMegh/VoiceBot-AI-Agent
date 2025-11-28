@@ -1,4 +1,8 @@
 // /api/longMemory.js
+export const config = {
+  runtime: "nodejs"
+};
+
 import pkg from "@supabase/supabase-js";
 const { createClient } = pkg;
 

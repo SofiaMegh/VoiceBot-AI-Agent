@@ -1,4 +1,6 @@
-// /api/text-interview.js
+export const config = {
+  runtime: "nodejs"
+};
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { loadHistory, appendToHistory } from "./_memory.js";
@@ -171,6 +173,4 @@ Return JSON only.`,
     });
   }
 }
-export const config = {
-  runtime: "edge",
-};
+

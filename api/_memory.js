@@ -1,4 +1,7 @@
 // /api/memory.js
+export const config = {
+  runtime: "nodejs"
+};
 
 import { Redis } from "@upstash/redis";
 
