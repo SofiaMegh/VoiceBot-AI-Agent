@@ -1,13 +1,16 @@
+// api/text-interview.js
+
 export const config = {
-  runtime: "nodejs"
+  runtime: "nodejs"
 };
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { loadHistory, appendToHistory } from "./_memory.js";
+// Ensure these paths match your filenames exactly
+import { loadHistory, appendToHistory } from "./_memory.js"; 
 import { loadLongTermMemory, saveLongTermMemory } from "./longMemory.js";
 
 // ----------------------------
-// SYSTEM PROMPT
+// SYSTEM PROMPT (Used in model configuration, not manually in prompt)
 // ----------------------------
 const systemPrompt = `
 You are an AI candidate interviewing for an AI Agent Team position at 100x.
@@ -40,137 +43,118 @@ These illustrate how I move fluidly between experimentation and deployment — f
 // API HANDLER
 // ----------------------------
 export default async function handler(req, res) {
-  // CORS for Vercel
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // CORS for Vercel
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
-  try {
-    const { userQuestion } = req.body;
+  try {
+    const { userQuestion } = req.body;
 
-    if (!userQuestion) {
-      return res.status(400).json({ error: "No question provided." });
-    }
+    if (!userQuestion) {
+      return res.status(400).json({ error: "No question provided." });
+    }
 
-    console.log("User Question:", userQuestion);
+    console.log("User Question:", userQuestion);
+    const sessionId = "voice-agent-session";
 
-    // ----------------------------
-    // 1. Load short-term memory (Redis)
-    // ----------------------------
-    const oldHistory = await loadHistory();
+    // ----------------------------
+    // 1. Load short-term memory (History)
+    // ----------------------------
+    // This loads an array of { role: "user" | "model", parts: [...] } objects
+    const history = await loadHistory(); 
 
-    const memoryPrefix = oldHistory.length
-      ? oldHistory
-          .map(
-            (h) =>
-              `${h.role === "user" ? "User" : "Meghleena"}: ${
-                h.parts?.[0]?.text || ""
-              }`
-          )
-          .join("\n")
-      : "";
+    // ----------------------------
+    // 2. Load long-term memory (Supabase)
+    // ----------------------------
+    const ltm = await loadLongTermMemory(sessionId);
 
-    // ----------------------------
-    // 2. Load long-term memory (Supabase)
-    // ----------------------------
-    const sessionId = "voice-agent-session";
-    const ltm = await loadLongTermMemory(sessionId);
-
-    const ltmText =
-      Object.keys(ltm).length > 0
-        ? `\n\nLong-term memory: ${JSON.stringify(ltm)}`
-        : "";
+    const ltmText =
+      Object.keys(ltm).length > 0
+        ? `\n\nLong-term memory context (Use these facts to guide your answer): ${JSON.stringify(ltm)}`
+        : "";
 
     // ----------------------------
-    // Build Final Prompt
-    // ----------------------------
-    const finalPrompt = `
-${systemPrompt}
-
-${memoryPrefix}
-
-${ltmText}
-
-User: ${userQuestion}
-`;
-
-    // ----------------------------
-    // 3. LLM main response
-    // ----------------------------
-    const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: finalPrompt }],
-        },
-      ],
+    // 3. LLM main response (Using Chat for robust history)
+    // ----------------------------
+    const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    
+    // Initialize the chat model with system instructions and history
+    const chat = ai.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        systemInstruction: systemPrompt // Use the dedicated parameter for persona
+    }).startChat({
+        history: history // Pass history array directly
     });
 
-    const botAnswer = result.response.text().trim();
-    console.log("Bot Answer:", botAnswer);
-
-    // ----------------------------
-    // 4. Save short-term memory (Redis)
-    // ----------------------------
-    await appendToHistory(userQuestion, botAnswer);
-
-    // ----------------------------
-    // 5. Extract long-term memory
-    // ----------------------------
-    const extractionModel = ai.getGenerativeModel({
-      model: "gemini-2.5-flash",
+    // Send the user's message, including LTM context for the model to use
+    const result = await chat.sendMessage({
+        message: userQuestion + ltmText 
     });
 
-    const extraction = await extractionModel.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Extract factual long-term stable memories.
+    const botAnswer = result.response.text.trim();
+    console.log("Bot Answer:", botAnswer);
+
+    // ----------------------------
+    // 4. Save short-term memory (Redis)
+    // ----------------------------
+    await appendToHistory(userQuestion, botAnswer);
+
+    // ----------------------------
+    // 5. Extract long-term memory (Using JSON output config)
+    // ----------------------------
+    const extractionModel = ai.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      config: {
+        responseMimeType: "application/json", // Ensures pure JSON response
+      },
+    });
+    
+    // Simple prompt for extraction
+    const extractionPrompt = `Extract factual long-term stable memories about the user. Do not include facts about Meghleena.
 User: "${userQuestion}"
-Bot: "${botAnswer}"
-Return JSON only.`,
-            },
-          ],
-        },
-      ],
-    });
+Meghleena: "${botAnswer}"`;
 
-    let newFacts = {};
-    try {
-      const raw = extraction.response.text().trim();
-      newFacts = JSON.parse(raw);
-    } catch (e) {
-      newFacts = {};
-    }
+    const extraction = await extractionModel.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: extractionPrompt }],
+        },
+      ],
+    });
 
-    await saveLongTermMemory(sessionId, newFacts);
+    let newFacts = {};
+    try {
+      const raw = extraction.response.text.trim();
+      newFacts = JSON.parse(raw);
+    } catch (e) {
+        console.error("Error parsing LTM JSON, defaulting to empty object:", e.message);
+      newFacts = {};
+    }
 
-    // ----------------------------
-    // 6. Respond to frontend
-    // ----------------------------
-    return res.status(200).json({
-      userQuestion,
-      botAnswer,
-    });
-  } catch (err) {
-    console.error("API Error:", err);
-    return res.status(500).json({
-      error: "Internal Server Error",
-      details: err.message,
-    });
-  }
+    await saveLongTermMemory(sessionId, newFacts);
+
+    // ----------------------------
+    // 6. Respond to frontend
+    // ----------------------------
+    return res.status(200).json({
+      userQuestion,
+      botAnswer,
+    });
+  } catch (err) {
+    console.error("API Error:", err);
+    return res.status(500).json({
+      error: "Internal Server Error",
+      details: err.message,
+    });
+  }
 }
-
